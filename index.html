@@ -3196,6 +3196,27 @@
             appState.isDrawing = true;
 
             const objectInfo = findObjectAtPoint(pos.x, pos.y);
+            
+            // Verificar texto ANTES del switch (como funciona con 'select')
+            if (appState.currentTool === 'text' && objectInfo.object && objectInfo.object.text) {
+                // Hay un texto existente, permitir moverlo
+                // Usar selectObject con autoSelectTool=false para NO cambiar la herramienta
+                selectObject(objectInfo.object, false);
+                appState.isDraggingObject = true;
+                
+                // Calcular dragOffset igual que con 'select'
+                const objX = objectInfo.object.x;
+                const objY = objectInfo.object.y;
+                appState.dragOffset = { x: pos.x - objX, y: pos.y - objY };
+                
+                // Si se hizo clic en un handle (excepto 'move' que ya no existe), manejarlo
+                if (objectInfo.handle && objectInfo.handle !== 'move') {
+                    appState.isDraggingObject = false;
+                    handleHandleMouseDown(e, objectInfo.object, objectInfo.handle);
+                }
+                return; // Salir temprano
+            }
+            
             if (appState.currentTool === 'select' && objectInfo.object) {
                 selectObject(objectInfo.object);
                 appState.isDraggingObject = true;
@@ -3214,7 +3235,8 @@
                 
                 appState.dragOffset = { x: pos.x - objX, y: pos.y - objY };
                 
-                if (objectInfo.handle) {
+                // Si se hizo clic en un handle (excepto 'move' que ya no existe), manejarlo
+                if (objectInfo.handle && objectInfo.handle !== 'move') {
                     appState.isDraggingObject = false; 
                     handleHandleMouseDown(e, objectInfo.object, objectInfo.handle);
                 }
@@ -3247,6 +3269,7 @@
                     startShape(pos.x, pos.y);
                     break;
                 case 'text':
+                    // Solo aÃ±adir nuevo texto (la deteccion de texto existente ya se hizo antes del switch)
                     addTextAtPosition(pos.x, pos.y);
                     break;
                 case 'gradient':
@@ -3284,7 +3307,7 @@
             }
 
             if (appState.isDraggingObject && imageState.selectedObject) {
-                moveSelectedObject(pos.x, pos.y);
+moveSelectedObject(pos.x, pos.y);
                 return;
             }
 
@@ -5309,7 +5332,7 @@
             };
         }
         function moveSelectedObject(x, y) {
-            if (!imageState.selectedObject) return;
+if (!imageState.selectedObject) return;
             
             const obj = imageState.selectedObject;
             const newX = x - appState.dragOffset.x;
@@ -5318,7 +5341,7 @@
             if (obj.text) {
                 obj.x = newX;
                 obj.y = newY;
-            } else if (obj.startX !== undefined && obj.startY !== undefined) {
+} else if (obj.startX !== undefined && obj.startY !== undefined) {
                 const width = obj.endX - obj.startX;
                 const height = obj.endY - obj.startY;
                 
@@ -5406,8 +5429,10 @@
             
             for (let i = imageState.textElements.length - 1; i >= 0; i--) {
                 const text = imageState.textElements[i];
-                if (isPointInTextBounds(x, y, text, tolerance)) {
-                    return { object: text, handle: getTextHandle(x, y, text) };
+                const inBounds = isPointInTextBounds(x, y, text, tolerance);
+                if (inBounds) {
+                    const handle = getTextHandle(x, y, text);
+                    return { object: text, handle: handle };
                 }
             }
             
@@ -5646,25 +5671,46 @@
             ctx.putImageData(new ImageData(dstData, width, height), 0, 0);
         }
 
-        function isPointInTextBounds(x, y, textElement, tolerance = 10) {
-            if (!textElement.width || !textElement.height) calculateTextDimensions(textElement);
+        function isPointInTextBounds(x, y, textElement, tolerance = 15) {
+// Asegurar que las dimensiones esten calculadas
+            if (!textElement.width || !textElement.height) {
+                calculateTextDimensions(textElement);
+            }
+            
+            // Si aun no tiene dimensiones, usar valores por defecto generosos
+            if (!textElement.width || !textElement.height) {
+                const defaultWidth = textElement.size * (textElement.text ? textElement.text.length : 10);
+                const defaultHeight = textElement.size * 1.5;
+                textElement.width = textElement.width || defaultWidth;
+                textElement.height = textElement.height || defaultHeight;
+            }
             
             let left, right;
             if (textElement.align === 'center') {
-                left = textElement.x - textElement.width / 2 - tolerance;
-                right = textElement.x + textElement.width / 2 + tolerance;
+                left = textElement.x - textElement.width / 2;
+                right = textElement.x + textElement.width / 2;
             } else if (textElement.align === 'right') {
-                left = textElement.x - textElement.width - tolerance;
-                right = textElement.x + tolerance;
+                left = textElement.x - textElement.width;
+                right = textElement.x;
             } else { 
-                left = textElement.x - tolerance;
-                right = textElement.x + textElement.width + tolerance;
+                left = textElement.x;
+                right = textElement.x + textElement.width;
             }
             
-            const top = textElement.y - textElement.height / 2 - tolerance;
-            const bottom = textElement.y + textElement.height / 2 + tolerance;
+            const top = textElement.y - textElement.height / 2;
+            const bottom = textElement.y + textElement.height / 2;
             
-            return x >= left && x <= right && y >= top && y <= bottom;
+            // Tolerancia muy generosa - expandir area significativamente
+            const expandedLeft = left - tolerance;
+            const expandedRight = right + tolerance;
+            const expandedTop = top - tolerance;
+            const expandedBottom = bottom + tolerance;
+            
+            const result = x >= expandedLeft && 
+                   x <= expandedRight && 
+                   y >= expandedTop && 
+                   y <= expandedBottom;
+return result;
         }
 
         function isPointNearArrow(x, y, arrow, tolerance = 10) {
@@ -5696,7 +5742,9 @@
         }
 
         function getTextHandle(x, y, textElement) {
-            if (!textElement.width || !textElement.height) return null;
+if (!textElement.width || !textElement.height) {
+return null;
+            }
             
             const handleSize = 12;
             let left, right, top, bottom, centerX;
@@ -5719,12 +5767,11 @@
             bottom = textElement.y + textElement.height / 2;
             const centerY = textElement.y;
             
-            if (Math.abs(x - right) < handleSize && Math.abs(y - top) < handleSize) return 'edit';
-            if (Math.abs(x - centerX) < handleSize && Math.abs(y - centerY) < handleSize) return 'move';
-            if (Math.abs(x - left) < handleSize && Math.abs(y - top) < handleSize) return 'resize-nw';
-            if (Math.abs(x - right) < handleSize && Math.abs(y - bottom) < handleSize) return 'resize-se';
-            
-            return null;
+            let handle = null;
+            if (Math.abs(x - right) < handleSize && Math.abs(y - top) < handleSize) handle = 'edit';
+            else if (Math.abs(x - left) < handleSize && Math.abs(y - top) < handleSize) handle = 'resize-nw';
+            else if (Math.abs(x - right) < handleSize && Math.abs(y - bottom) < handleSize) handle = 'resize-se';
+return handle;
         }
 
         function getArrowHandle(x, y, arrow) {
@@ -5793,7 +5840,6 @@
             domElements.canvasWrapper.appendChild(outline);
             
             const handles = [
-                { type: 'move', x: centerX, y: centerY },
                 { type: 'edit', x: right, y: top },
                 { type: 'resize-nw', x: left, y: top },
                 { type: 'resize-se', x: right, y: bottom }
@@ -5806,7 +5852,10 @@
                 handleEl.style.top = `${handle.y - 6}px`;
                 handleEl.addEventListener('mousedown', (e) => handleHandleMouseDown(e, textElement, handle.type));
                 if (handle.type === 'edit') {
+                    handleEl.title = 'Doble clic para editar el texto';
                     handleEl.addEventListener('dblclick', () => editTextElement(textElement));
+                } else if (handle.type.startsWith('resize')) {
+                    handleEl.title = 'Arrastra para redimensionar el texto';
                 }
                 domElements.canvasWrapper.appendChild(handleEl);
                 imageState.activeHandles.push(handleEl);
