@@ -256,6 +256,7 @@
 
         /* Canvas Area */
         .canvas-container {
+            background: #1e1e1e; /* Fondo más oscuro para contrastar con el blanco */
             flex: 1;
             background: var(--bg-primary);
             position: relative;
@@ -267,6 +268,7 @@
         }
 
         .canvas-wrapper {
+            box-shadow: 0 0 0 1000px rgba(0,0,0,0.1); /* Sombra masiva para ver límites */
             position: absolute;
             top: 50%;
             left: 50%;
@@ -278,6 +280,7 @@
         }
 
         #mainCanvas {
+            overflow: visible;
             display: block;
             cursor: crosshair;
         }
@@ -2870,7 +2873,7 @@
                 active: false,
                 rect: null,
                 dragging: null,
-                handleSize: 8
+                handleSize: 10
             }
         };
         
@@ -3068,7 +3071,8 @@
 
                     canvas.addEventListener('mousedown', handleMouseDown);
         canvas.addEventListener('mousemove', handleMouseMove);
-        canvas.addEventListener('mouseup', handleMouseUp);
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
         canvas.addEventListener('wheel', handleCanvasWheel);
         canvas.addEventListener('mousemove', updateZoomCursor);
         domElements.canvasContainer.addEventListener('wheel', handleContainerWheel);
@@ -3158,12 +3162,17 @@
                     // Aplicar recorte con Enter
                     applyCropFromHandles();
                 } else if (e.key === 'Escape') {
-                    clearSelection();
+                    if (appState.currentTool === 'crop') {
+                        // Si estamos en modo recorte, Escape resetea al área completa en lugar de desactivar
+                        activateCropHandles();
+                    } else {
+                        clearSelection();
+                        if (imageState.cropHandles.active) {
+                            deactivateCropHandles();
+                        }
+                    }
                     if (imageState.cloneSelection) {
                         clearCloneSelection();
-                    }
-                    if (imageState.cropHandles.active) {
-                        deactivateCropHandles();
                     }
                     closeAllFloatingPanels();
                     closeModal('textModal');
@@ -3200,21 +3209,18 @@
             // Verificar texto ANTES del switch (como funciona con 'select')
             if (appState.currentTool === 'text' && objectInfo.object && objectInfo.object.text) {
                 // Hay un texto existente, permitir moverlo
-                // Usar selectObject con autoSelectTool=false para NO cambiar la herramienta
                 selectObject(objectInfo.object, false);
                 appState.isDraggingObject = true;
                 
-                // Calcular dragOffset igual que con 'select'
                 const objX = objectInfo.object.x;
                 const objY = objectInfo.object.y;
                 appState.dragOffset = { x: pos.x - objX, y: pos.y - objY };
                 
-                // Si se hizo clic en un handle (excepto 'move' que ya no existe), manejarlo
                 if (objectInfo.handle && objectInfo.handle !== 'move') {
                     appState.isDraggingObject = false;
                     handleHandleMouseDown(e, objectInfo.object, objectInfo.handle);
                 }
-                return; // Salir temprano
+                return;
             }
             
             if (appState.currentTool === 'select' && objectInfo.object) {
@@ -3235,7 +3241,6 @@
                 
                 appState.dragOffset = { x: pos.x - objX, y: pos.y - objY };
                 
-                // Si se hizo clic en un handle (excepto 'move' que ya no existe), manejarlo
                 if (objectInfo.handle && objectInfo.handle !== 'move') {
                     appState.isDraggingObject = false; 
                     handleHandleMouseDown(e, objectInfo.object, objectInfo.handle);
@@ -3248,13 +3253,11 @@
                     startSelection(pos.x, pos.y);
                     break;
                 case 'crop':
-                    // Verificar si estamos arrastrando un punto de control
-                    if (imageState.cropHandles.active && startCropHandleDrag(pos.x, pos.y)) {
-                        // Ya se inició el arrastre del punto de control
-                        break;
+                    if (startCropHandleDrag(pos.x, pos.y)) {
+                        // Ya se maneja en startCropHandleDrag
+                    } else {
+                        startSelection(pos.x, pos.y);
                     }
-                    // Si no, usar la selección normal
-                    startSelection(pos.x, pos.y);
                     break;
                 case 'brush':
                     startBrush(pos.x, pos.y);
@@ -3262,63 +3265,44 @@
                 case 'eraser':
                     startEraser(pos.x, pos.y);
                     break;
+                case 'text':
+                    handleTextTool(pos.x, pos.y);
+                    break;
                 case 'arrow':
                     startArrow(pos.x, pos.y);
                     break;
                 case 'shapes':
                     startShape(pos.x, pos.y);
                     break;
-                case 'text':
-                    // Solo aÃ±adir nuevo texto (la deteccion de texto existente ya se hizo antes del switch)
-                    addTextAtPosition(pos.x, pos.y);
-                    break;
                 case 'gradient':
                     startGradient(pos.x, pos.y);
                     break;
-                case 'eyedropper':
-                    handleEyedropperClick(e, pos);
-                    break;
                 case 'clone':
-                    // Solo clic izquierdo para selección de clonado
-                    if (e.button === 0) {
-                        handleCloneTool(pos.x, pos.y, e);
-                    }
-                    break;
-                case 'zoom':
-                    e.ctrlKey ? zoomOut(pos.x, pos.y) : zoomIn(pos.x, pos.y);
+                    handleCloneTool(pos.x, pos.y, e);
                     break;
             }
         }
 
         function handleMouseMove(e) {
             const pos = getCanvasMousePos(e);
-            updateMousePosition(pos.x, pos.y);
             
-            // SIEMPRE actualizar la información del pixel cuando el cursor está sobre el canvas
+            // Actualizar info de píxel en barra de estado
             updatePixelInfo(pos.x, pos.y);
             
-            // Actualizar cursor para herramienta de recorte
-            updateCropCursor(e);
-
-            // Manejar eyedropper específicamente
-            if (appState.currentTool === 'eyedropper' && appState.eyedropperActive) {
-                handleEyedropperMouseMove(e, pos);
+            if (!appState.isDrawing && !appState.isDraggingObject) {
+                updateCursor(e);
                 return;
             }
-
-            if (appState.isDraggingObject && imageState.selectedObject) {
-moveSelectedObject(pos.x, pos.y);
-                return;
-            }
-
-            if (!appState.isDrawing) return;
 
             switch(appState.currentTool) {
                 case 'select':
-                    updateSelection(pos.x, pos.y);
+                    if (appState.isDraggingObject && imageState.selectedObject) {
+                        moveObject(imageState.selectedObject, pos.x - appState.dragOffset.x, pos.y - appState.dragOffset.y);
+                    } else {
+                        updateSelection(pos.x, pos.y);
+                    }
                     break;
                 case 'crop':
-                    // Verificar si estamos arrastrando un punto de control
                     if (imageState.cropHandles.dragging) {
                         updateCropHandleDrag(pos.x, pos.y);
                     } else {
@@ -3341,12 +3325,15 @@ moveSelectedObject(pos.x, pos.y);
                     updateGradient(pos.x, pos.y);
                     break;
                 case 'clone':
-                    continueClone(pos.x, pos.y);
+                    if (imageState.cloneSelection && imageState.cloneSelection.active) {
+                        updateSelection(pos.x, pos.y);
+                    }
                     break;
             }
         }
 
         function handleMouseUp(e) {
+            const pos = getCanvasMousePos(e);
             if (appState.isDraggingObject) {
                 saveToHistory();
             }
@@ -3358,9 +3345,14 @@ moveSelectedObject(pos.x, pos.y);
                     finishSelection();
                     break;
                 case 'crop':
-                    // Verificar si estábamos arrastrando un punto de control
                     if (imageState.cropHandles.dragging) {
+                        const hasMoved = imageState.cropHandles.dragging.startX !== pos.x || 
+                                        imageState.cropHandles.dragging.startY !== pos.y;
                         finishCropHandleDrag();
+                        // Aplicar automáticamente el recorte/extensión al soltar el ratón solo si se ha movido
+                        if (hasMoved) {
+                            applyCropFromHandles();
+                        }
                     } else {
                         finishSelection();
                     }
@@ -3389,7 +3381,7 @@ moveSelectedObject(pos.x, pos.y);
                     break;
             }
         }
-        
+
         function handleDragOver(e) {
             e.preventDefault();
             e.currentTarget.classList.add('drag-over');
@@ -3572,6 +3564,9 @@ moveSelectedObject(pos.x, pos.y);
             clearAllHandles();
             canvas.width = state.width;
             canvas.height = state.height;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.style.width = (state.width / dpr) + "px";
+            canvas.style.height = (state.height / dpr) + "px";
 
             // Restore original image
             if (state.originalImageSrc) {
@@ -3591,7 +3586,8 @@ moveSelectedObject(pos.x, pos.y);
                     
                     updateStatusBar();
                     updateHistogram();
-                    redrawCanvas();
+                    updateToolButtonHighlight(appState.currentTool); updateCursor(); updateToolPropertiesPanelVisibility();
+                    redrawCanvas(); if (appState.currentTool === "crop") { activateCropHandles(); }
                     
                     // Actualizar imagen original del reemplazo de color después de restaurar
                     if (canvas && ctx) {
@@ -3614,7 +3610,8 @@ moveSelectedObject(pos.x, pos.y);
                 
                 updateStatusBar();
                 updateHistogram();
-                redrawCanvas();
+                updateToolButtonHighlight(appState.currentTool); updateCursor(); updateToolPropertiesPanelVisibility();
+                redrawCanvas(); if (appState.currentTool === "crop") { activateCropHandles(); }
                 
                 // Actualizar imagen original del reemplazo de color después de restaurar
                 if (canvas && ctx) {
@@ -3648,6 +3645,27 @@ moveSelectedObject(pos.x, pos.y);
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
             ctx.clearRect(0, 0, width, height);
+
+            // 1. SIEMPRE dibujar fondo blanco base por si hay áreas vacías o extensión
+            ctx.save();
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, width, height);
+            ctx.restore();
+
+            // Guía visual del área de recorte/extensión
+            if (imageState.cropHandles.active && imageState.cropHandles.rect) {
+                ctx.save();
+                const r = imageState.cropHandles.rect;
+                
+                // Si el rectángulo se sale del canvas, dibujamos una sombra que indique el área total
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.strokeStyle = '#00ffff'; // Cian para visibilidad
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.strokeRect(r.x, r.y, r.width, r.height);
+                ctx.restore();
+            }
 
             ctx.save();
             ctx.filter = getFilterCssString();
@@ -4103,12 +4121,15 @@ moveSelectedObject(pos.x, pos.y);
             
             ctx.save();
             
-            // Dibujar borde del área de recorte
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
-            ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+            // Dibujar borde del área de recorte con alta visibilidad (doble línea)
             ctx.setLineDash([]);
+            ctx.strokeStyle = '#000000'; // Borde exterior negro
+            ctx.lineWidth = 3;
+            ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+            
+            ctx.strokeStyle = '#00ffff'; // Borde interior cian brillante
+            ctx.lineWidth = 1;
+            ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
             
             // Dibujar puntos de control
             ctx.fillStyle = '#ffffff';
@@ -4224,15 +4245,12 @@ moveSelectedObject(pos.x, pos.y);
                     break;
             }
             
-            // Limitar el rectángulo dentro del canvas
-            const canvasWidth = canvas.width / (window.devicePixelRatio || 1);
-            const canvasHeight = canvas.height / (window.devicePixelRatio || 1);
+            // No limitamos el rectángulo dentro del canvas para permitir la extensión
             
-            newRect.x = Math.max(0, Math.min(newRect.x, canvasWidth - newRect.width));
-            newRect.y = Math.max(0, Math.min(newRect.y, canvasHeight - newRect.height));
-            newRect.width = Math.min(newRect.width, canvasWidth - newRect.x);
-            newRect.height = Math.min(newRect.height, canvasHeight - newRect.y);
-            
+            newRect.x = Math.round(newRect.x);
+            newRect.y = Math.round(newRect.y);
+            newRect.width = Math.round(newRect.width);
+            newRect.height = Math.round(newRect.height);
             imageState.cropHandles.rect = newRect;
             redrawCanvas();
             drawCropHandles();
@@ -4274,6 +4292,21 @@ moveSelectedObject(pos.x, pos.y);
             const height = canvas.height / dpr;
             
             ctx.clearRect(0, 0, width, height);
+
+            // Guía visual del área de recorte/extensión
+            if (imageState.cropHandles.active && imageState.cropHandles.rect) {
+                ctx.save();
+                const r = imageState.cropHandles.rect;
+                
+                // Si el rectángulo se sale del canvas, dibujamos una sombra que indique el área total
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.strokeStyle = '#00ffff'; // Cian para visibilidad
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.strokeRect(r.x, r.y, r.width, r.height);
+                ctx.restore();
+            }
             
             ctx.save();
             ctx.filter = getFilterCssString();
@@ -4306,15 +4339,18 @@ moveSelectedObject(pos.x, pos.y);
             // Restaurar el contexto original
             ctx = originalCtx;
             
-            // Ahora recortar la parte deseada del canvas limpio
-            const croppedImageData = tempCtx.getImageData(rect.x * dpr, rect.y * dpr, rect.width * dpr, rect.height * dpr);
-            
-            // Crear canvas final con solo la parte recortada
+            // Ahora recortar/extender la parte deseada del canvas limpio
             const finalCanvas = document.createElement('canvas');
             const finalCtx = finalCanvas.getContext('2d');
             finalCanvas.width = rect.width * dpr;
             finalCanvas.height = rect.height * dpr;
-            finalCtx.putImageData(croppedImageData, 0, 0);
+            
+            // Rellenar con blanco el fondo (para las áreas de extensión)
+            finalCtx.fillStyle = '#FFFFFF';
+            finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+            
+            // Usamos drawImage en lugar de getImageData para soportar coordenadas fuera de los límites (extensión)
+            finalCtx.drawImage(tempCanvas, -rect.x * dpr, -rect.y * dpr);
             
             // Crear la imagen recortada
             const croppedImage = new Image();
@@ -4338,12 +4374,18 @@ moveSelectedObject(pos.x, pos.y);
                 imageState.brushStrokes = [];
                 imageState.selectedObject = null;
                 
-                deactivateCropHandles();
+                // En lugar de desactivar, reiniciamos el rectángulo al nuevo tamaño de la imagen
+                const finalWidth = canvas.width / dpr;
+                const finalHeight = canvas.height / dpr;
+                imageState.cropHandles.rect = { x: 0, y: 0, width: finalWidth, height: finalHeight };
+                imageState.cropHandles.active = true;
+                
                 redrawCanvas();
+                drawCropHandles();
                 updateStatusBar();
                 updateHistogram();
                 saveToHistory();
-                showNotification('✂️ Imagen recortada', 'success');
+                showNotification('✂️ Imagen ajustada', 'success');
             };
             croppedImage.src = finalCanvas.toDataURL();
         }
@@ -5512,7 +5554,12 @@ if (!imageState.selectedObject) return;
             imageState.selectionActive = false;
 
             if (appState.currentTool === 'crop' && imageState.selectionRect?.width > 10 && imageState.selectionRect?.height > 10) {
-                cropToSelection();
+                // Sincronizar el rectángulo de selección con el de los puntos de control
+                imageState.cropHandles.rect = { ...imageState.selectionRect };
+                // Ocultar el overlay de selección tradicional
+                if (domElements.selectionOverlay) domElements.selectionOverlay.style.display = 'none';
+                // Aplicar el recorte/extensión usando la lógica de handles
+                applyCropFromHandles();
                 return; 
             }
             
@@ -6345,10 +6392,70 @@ return handle;
 
         function saveImage() {
             if (!canvas) return;
+            
+            // 1. Guardar estados actuales
+            const originalCropActive = imageState.cropHandles.active;
+            const originalCloneSelection = imageState.cloneSelection;
+            
+            // 2. Desactivar elementos de interfaz
+            imageState.cropHandles.active = false;
+            imageState.cloneSelection = null;
+            
+            // 3. Crear canvas temporal para exportación limpia
+            const exportCanvas = document.createElement('canvas');
+            const exportCtx = exportCanvas.getContext('2d');
+            exportCanvas.width = canvas.width;
+            exportCanvas.height = canvas.height;
+            
+            // 4. Redibujar en el contexto temporal (sin los puntos de control)
+            const dpr = window.devicePixelRatio || 1;
+            const width = canvas.width / dpr;
+            const height = canvas.height / dpr;
+
+            exportCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            exportCtx.imageSmoothingEnabled = true;
+            exportCtx.imageSmoothingQuality = 'high';
+            
+            // Fondo blanco
+            exportCtx.fillStyle = '#FFFFFF';
+            exportCtx.fillRect(0, 0, width, height);
+
+            // Imagen base con filtros CSS
+            exportCtx.save();
+            exportCtx.filter = getFilterCssString();
+            if (imageState.originalImage) {
+                exportCtx.drawImage(imageState.originalImage, 0, 0, width, height);
+            }
+            exportCtx.restore();
+
+            // Guardar contexto original para que las funciones de dibujo usen el temporal
+            const mainCtx = ctx;
+            ctx = exportCtx;
+
+            // Filtros no-CSS
+            if (toolSettings.filters.vignette > 0) applyVignette(width, height);
+            if (toolSettings.filters.grain > 0) applyGrain(canvas.width, canvas.height);
+            if (toolSettings.filters.sharpen > 0) applySharpen(canvas.width, canvas.height);
+
+            // Elementos vectoriales
+            imageState.shapes.forEach(shape => drawShape(shape));
+            imageState.arrows.forEach(arrow => drawArrow(arrow));
+            imageState.textElements.forEach(text => drawTextElement(text));
+            imageState.brushStrokes.forEach(stroke => drawBrushStroke(stroke));
+            
+            // Restaurar contexto principal
+            ctx = mainCtx;
+
+            // 5. Descargar desde el canvas limpio
             const link = document.createElement('a');
             link.download = `imaxe_${new Date().toISOString().slice(0, 10)}.png`;
-            link.href = canvas.toDataURL('image/png');
+            link.href = exportCanvas.toDataURL('image/png');
             link.click();
+            
+            // 6. Restaurar estado de interfaz
+            imageState.cropHandles.active = originalCropActive;
+            imageState.cloneSelection = originalCloneSelection;
+            redrawCanvas();
         }
 
         function exportImage() {
@@ -6374,14 +6481,68 @@ return handle;
             const quality = domElements.exportQuality.value;
             const size = domElements.exportSize.value;
             
-            let exportCanvas = canvas;
+            // 1. Guardar estados actuales
+            const originalCropActive = imageState.cropHandles.active;
+            const originalCloneSelection = imageState.cloneSelection;
+            
+            // 2. Desactivar elementos de interfaz
+            imageState.cropHandles.active = false;
+            imageState.cloneSelection = null;
+            
+            // 3. Crear canvas temporal para exportación limpia
+            const cleanCanvas = document.createElement('canvas');
+            const cleanCtx = cleanCanvas.getContext('2d');
+            cleanCanvas.width = canvas.width;
+            cleanCanvas.height = canvas.height;
+            
+            // 4. Redibujar versión limpia
+            const dpr = window.devicePixelRatio || 1;
+            const width = canvas.width / dpr;
+            const height = canvas.height / dpr;
+
+            cleanCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            cleanCtx.imageSmoothingEnabled = true;
+            cleanCtx.imageSmoothingQuality = 'high';
+            
+            // Fondo blanco
+            cleanCtx.fillStyle = '#FFFFFF';
+            cleanCtx.fillRect(0, 0, width, height);
+
+            // Imagen base con filtros CSS
+            cleanCtx.save();
+            cleanCtx.filter = getFilterCssString();
+            if (imageState.originalImage) {
+                cleanCtx.drawImage(imageState.originalImage, 0, 0, width, height);
+            }
+            cleanCtx.restore();
+
+            // Guardar contexto original para que las funciones de dibujo usen el temporal
+            const mainCtx = ctx;
+            ctx = cleanCtx;
+
+            // Filtros no-CSS
+            if (toolSettings.filters.vignette > 0) applyVignette(width, height);
+            if (toolSettings.filters.grain > 0) applyGrain(cleanCanvas.width, cleanCanvas.height);
+            if (toolSettings.filters.sharpen > 0) applySharpen(cleanCanvas.width, cleanCanvas.height);
+
+            // Elementos vectoriales
+            imageState.shapes.forEach(shape => drawShape(shape));
+            imageState.arrows.forEach(arrow => drawArrow(arrow));
+            imageState.textElements.forEach(text => drawTextElement(text));
+            imageState.brushStrokes.forEach(stroke => drawBrushStroke(stroke));
+            
+            // Restaurar contexto principal
+            ctx = mainCtx;
+
+            // 5. Preparar el canvas de exportación final (con redimensionado si es necesario)
+            let exportCanvas = cleanCanvas;
             
             if (size !== 'original') {
                 exportCanvas = document.createElement('canvas');
                 const exportCtx = exportCanvas.getContext('2d');
                 const sizeMap = { hd: [1920, 1080], social: [1080, 1080], web: [800, 600] };
                 [exportCanvas.width, exportCanvas.height] = sizeMap[size];
-                exportCtx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
+                exportCtx.drawImage(cleanCanvas, 0, 0, exportCanvas.width, exportCanvas.height);
             }
             
             exportCanvas.toBlob(async (blob) => {
@@ -6389,6 +6550,10 @@ return handle;
                     if (window.showSaveFilePicker) {
                         const result = await saveWithModernAPI(fileName, format, blob);
                         if (result.success || result.cancelled) {
+                            // Restaurar estado de interfaz
+                            imageState.cropHandles.active = originalCropActive;
+                            imageState.cloneSelection = originalCloneSelection;
+                            redrawCanvas();
                             closeModal('exportModal');
                             return;
                         }
@@ -6398,8 +6563,17 @@ return handle;
                     link.href = URL.createObjectURL(blob);
                     link.click();
                     URL.revokeObjectURL(link.href);
+                    
+                    // Restaurar estado de interfaz
+                    imageState.cropHandles.active = originalCropActive;
+                    imageState.cloneSelection = originalCloneSelection;
+                    redrawCanvas();
                     closeModal('exportModal');
                 } catch (error) {
+                    // Restaurar estado incluso en caso de error
+                    imageState.cropHandles.active = originalCropActive;
+                    imageState.cloneSelection = originalCloneSelection;
+                    redrawCanvas();
                     showNotification(`❌ Error al guardar: ${error.message}`, 'error');
                 }
             }, `image/${format}`, format === 'png' ? undefined : parseFloat(quality));
